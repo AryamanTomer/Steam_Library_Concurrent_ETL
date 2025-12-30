@@ -2,8 +2,8 @@ import csv
 import time
 import requests
 
-STEAM_API_KEY = "CFC055B6D2DB329CC81A0D385B41BE71"
-STEAM_ID64 = "76561198843058971"
+STEAM_API_KEY = "STEAM_API_KEY"
+STEAM_ID64 = "STEAM_ID_64"
 
 OWNED_GAMES_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
 CURRENT_PLAYERS_URL = "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/"
