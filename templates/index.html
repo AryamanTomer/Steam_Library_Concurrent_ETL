@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Steam games · concurrent players</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>Steam games by concurrent players</h1>
+      <p class="sub">Full catalog from Steam, then ranked globally by live player count (most → least). Not sorted by App ID.</p>
+    </div>
+    <div class="actions">
+      <span id="meta" class="meta">Loading…</span>
+      <button type="button" id="downloadCatalogBtn" class="btn">Download catalog</button>
+      <button type="button" id="reloadCatalogBtn" class="btn btn-secondary" title="Re-fetch app list from Steam">Re-download catalog</button>
+      <button type="button" id="rebuildLbBtn" class="btn btn-secondary" title="Re-fetch CCU for every app and re-sort">Rebuild leaderboard</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden" role="status"></div>
+
+  <section class="toolbar">
+    <label class="field field-search">
+      <span>Filter</span>
+      <input type="search" id="searchInput" class="input search-input" placeholder="Type to filter by name or App ID…" autocomplete="off" enterkeyhint="search" />
+    </label>
+    <button type="button" id="clearSearchBtn" class="btn btn-secondary" title="Clear filter">Clear</button>
+    <label class="field">
+      <span>Page</span>
+      <input type="number" id="pageInput" min="1" value="1" class="input num" />
+    </label>
+    <label class="field">
+      <span>Per page</span>
+      <select id="perPageSelect" class="input">
+        <option value="10">10</option>
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="150">150</option>
+        <option value="200">200</option>
+        <option value="250">250</option>
+      </select>
+    </label>
+    <button type="button" id="applyBtn" class="btn">Apply</button>
+    <button type="button" id="prevBtn" class="btn btn-secondary">Prev</button>
+    <button type="button" id="nextBtn" class="btn btn-secondary">Next</button>
+  </section>
+
+  <main class="main">
+    <div class="chart-panel">
+      <h2 class="panel-title" id="chartPanelTitle">Concurrent players (this page)</h2>
+      <div class="chart-scroll">
+        <canvas id="ccuChart" height="0" aria-label="Concurrent players chart"></canvas>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th scope="col" class="num">Rank</th>
+            <th scope="col">Game</th>
+            <th scope="col" class="num">Players</th>
+            <th scope="col" class="num">App ID</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="4" class="muted pad">Checking…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script>
+    (function () {
+      var chartInstance = null;
+      var tbody = document.getElementById("tbody");
+      var meta = document.getElementById("meta");
+      var banner = document.getElementById("banner");
+      var pageInput = document.getElementById("pageInput");
+      var perPageSelect = document.getElementById("perPageSelect");
+      var applyBtn = document.getElementById("applyBtn");
+      var prevBtn = document.getElementById("prevBtn");
+      var nextBtn = document.getElementById("nextBtn");
+      var downloadCatalogBtn = document.getElementById("downloadCatalogBtn");
+      var reloadCatalogBtn = document.getElementById("reloadCatalogBtn");
+      var rebuildLbBtn = document.getElementById("rebuildLbBtn");
+      var searchInput = document.getElementById("searchInput");
+      var clearSearchBtn = document.getElementById("clearSearchBtn");
+      var chartPanelTitle = document.getElementById("chartPanelTitle");
+      var filterDebounceTimer = null;
+      var FILTER_DEBOUNCE_MS = 320;
+
+      function showBanner(text, kind) {
+        banner.textContent = text;
+        banner.classList.remove("hidden", "err", "ok");
+        if (kind === "err") banner.classList.add("err");
+        if (kind === "ok") banner.classList.add("ok");
+      }
+
+      function parseQs() {
+        var u = new URL(window.location.href);
+        var p = parseInt(u.searchParams.get("page") || "1", 10);
+        var pp = parseInt(u.searchParams.get("per_page") || "50", 10);
+        if (!isNaN(p) && p >= 1) pageInput.value = String(p);
+        if ([10,25,50,100,150,200,250].indexOf(pp) >= 0) perPageSelect.value = String(pp);
+        var qv = u.searchParams.get("q");
+        searchInput.value = qv ? qv : "";
+      }
+
+      function pushQs() {
+        var u = new URL(window.location.href);
+        u.searchParams.set("page", pageInput.value);
+        u.searchParams.set("per_page", perPageSelect.value);
+        var s = searchInput.value.trim();
+        if (s) u.searchParams.set("q", s);
+        else u.searchParams.delete("q");
+        history.replaceState({}, "", u.pathname + u.search);
+      }
+
+      function fmt(n) {
+        if (n < 0) return "—";
+        return n.toLocaleString("en-US");
+      }
+
+      function renderTable(games, page, perPage) {
+        tbody.innerHTML = "";
+        var base = (page - 1) * perPage;
+        games.forEach(function (g, i) {
+          var tr = document.createElement("tr");
+          tr.innerHTML =
+            '<td class="num muted">' + (base + i + 1) + "</td>" +
+            '<td class="name"></td>' +
+            '<td class="num">' + fmt(g.current_players) + "</td>" +
+            '<td class="num muted">' + g.appid + "</td>";
+          tr.querySelector(".name").textContent = g.name;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderChart(chart) {
+        var canvas = document.getElementById("ccuChart");
+        if (!chart || !chart.labels || !chart.values || chart.labels.length === 0) {
+          if (chartInstance) {
+            chartInstance.destroy();
+            chartInstance = null;
+          }
+          return;
+        }
+        if (typeof Chart === "undefined") return;
+
+        var h = Math.max(220, chart.labels.length * 18);
+        canvas.height = h;
+        canvas.parentElement.style.minHeight = Math.min(h, window.innerHeight * 0.55) + "px";
+
+        if (chartInstance) chartInstance.destroy();
+
+        chartInstance = new Chart(canvas.getContext("2d"), {
+          type: "bar",
+          data: {
+            labels: chart.labels,
+            datasets: [{
+              label: "Players",
+              data: chart.values,
+              backgroundColor: "rgba(102, 192, 244, 0.45)",
+              borderColor: "rgba(102, 192, 244, 0.9)",
+              borderWidth: 1
+            }]
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function (ctx) {
+                    return ctx.parsed.x.toLocaleString("en-US") + " players";
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: "#8b98a6", maxTicksLimit: 8 },
+                grid: { color: "rgba(42, 51, 64, 0.5)" }
+              },
+              y: {
+                ticks: { color: "#8b98a6", font: { size: 10 } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      function setMetaFromGames(data) {
+        var parts = [];
+        if (data.catalog_ready && data.leaderboard_ready) {
+          if (data.search) {
+            parts.push(
+              "Filtered · " +
+                (data.total || 0).toLocaleString("en-US") +
+                ' match' +
+                ((data.total || 0) === 1 ? "" : "es") +
+                ' for “' +
+                data.search +
+                "”"
+            );
+          } else {
+            parts.push((data.total || 0).toLocaleString("en-US") + " games ranked by players");
+          }
+          parts.push("page " + data.page + " / " + (data.total_pages || 1));
+        } else if (data.loading) {
+          var dp = data.download_progress;
+          if (dp != null && dp > 0) {
+            parts.push("Downloading catalog… " + dp.toLocaleString("en-US") + " apps");
+          } else {
+            parts.push("Downloading catalog…");
+          }
+        } else if (data.catalog_ready && data.leaderboard_loading) {
+          var a = data.leaderboard_progress_done || 0;
+          var b = data.leaderboard_progress_total || 0;
+          if (b > 0) {
+            parts.push("Fetching player counts… " + a.toLocaleString("en-US") + " / " + b.toLocaleString("en-US"));
+          } else {
+            parts.push("Building global leaderboard…");
+          }
+        } else if (data.catalog_ready && !data.leaderboard_ready && !data.leaderboard_loading) {
+          parts.push(
+            data.leaderboard_error ||
+              "Leaderboard not ready — click Rebuild leaderboard or reload the page."
+          );
+        } else if (data.last_error || data.leaderboard_error) {
+          parts.push(data.last_error || data.leaderboard_error || "Error");
+        } else {
+          parts.push("Set STEAM_API_KEY and click Download catalog");
+        }
+        meta.textContent = parts.join(" · ");
+      }
+
+      function loadGames() {
+        pushQs();
+        if (chartPanelTitle) {
+          chartPanelTitle.textContent = searchInput.value.trim()
+            ? "Concurrent players (filtered · this page)"
+            : "Concurrent players (this page)";
+        }
+        var page = parseInt(pageInput.value, 10) || 1;
+        var perPage = parseInt(perPageSelect.value, 10) || 50;
+        var qs = "?page=" + encodeURIComponent(page) + "&per_page=" + encodeURIComponent(perPage);
+        var sq = searchInput.value.trim();
+        if (sq) qs += "&q=" + encodeURIComponent(sq);
+
+        tbody.innerHTML = '<tr><td colspan="4" class="muted pad">Loading…</td></tr>';
+
+        return fetch("/api/games" + qs)
+          .then(function (r) {
+            if (!r.ok) throw new Error("Request failed");
+            return r.json();
+          })
+          .then(function (data) {
+            setMetaFromGames(data);
+
+            if ((data.last_error && !data.catalog_ready) || data.leaderboard_error) {
+              if (data.leaderboard_error && data.catalog_ready) {
+                showBanner(data.leaderboard_error, "err");
+              } else if (data.last_error) {
+                showBanner(data.last_error, "err");
+              }
+            } else {
+              banner.classList.add("hidden");
+            }
+
+            if (!data.catalog_ready && data.loading) {
+              tbody.innerHTML = '<tr><td colspan="4" class="muted pad">Downloading app list from Steam (large). Progress in the header. Use <code>STEAM_CATALOG_MAX_APPS</code> in .env for a smaller, faster list.</td></tr>';
+              renderChart({ labels: [], values: [] });
+              return data;
+            }
+
+            if (!data.catalog_ready) {
+              tbody.innerHTML = '<tr><td colspan="4" class="muted pad">' +
+                (data.last_error || "Add STEAM_API_KEY to .env, then click <strong>Download catalog</strong>.") + "</td></tr>";
+              renderChart({ labels: [], values: [] });
+              return data;
+            }
+
+            if (data.catalog_ready && !data.leaderboard_ready) {
+              if (data.leaderboard_loading) {
+                tbody.innerHTML = '<tr><td colspan="4" class="muted pad">Fetching concurrent players for <strong>every</strong> game in the catalog so we can sort globally (most → least). This takes a long time for a full catalog; progress is shown above.</td></tr>';
+              } else {
+                tbody.innerHTML = '<tr><td colspan="4" class="muted pad">' +
+                  (data.leaderboard_error ||
+                    "Leaderboard not ready — click <strong>Rebuild leaderboard</strong> or reload.") +
+                  "</td></tr>";
+              }
+              renderChart({ labels: [], values: [] });
+              return data;
+            }
+
+            if ((data.games || []).length === 0 && data.search) {
+              tbody.innerHTML = '<tr><td colspan="4" class="muted pad"></td></tr>';
+              var emptyTd = tbody.querySelector("td");
+              emptyTd.appendChild(document.createTextNode('No games match "'));
+              var strong = document.createElement("strong");
+              strong.textContent = data.search;
+              emptyTd.appendChild(strong);
+              emptyTd.appendChild(document.createTextNode('". Try another filter, or click Clear to show the full list.'));
+              renderChart({ labels: [], values: [] });
+            } else {
+              renderTable(data.games || [], data.page, data.per_page);
+              renderChart(data.chart || { labels: [], values: [] });
+            }
+            if (chartPanelTitle) {
+              chartPanelTitle.textContent = data.search
+                ? "Concurrent players (filtered · this page)"
+                : "Concurrent players (this page)";
+            }
+            pageInput.max = String(Math.max(1, data.total_pages || 1));
+            prevBtn.disabled = data.page <= 1;
+            nextBtn.disabled = data.page >= (data.total_pages || 1);
+            return data;
+          })
+          .catch(function () {
+            showBanner("Could not load data.", "err");
+          });
+      }
+
+      function pollStatus() {
+        fetch("/api/catalog/status")
+          .then(function (r) { return r.json(); })
+          .then(function (st) {
+            if (st.download_progress) {
+              meta.textContent = "Downloading catalog… " + st.download_progress.toLocaleString("en-US") + " apps";
+            } else if (st.loading) {
+              meta.textContent = "Downloading catalog…";
+            } else if (st.leaderboard_loading && st.leaderboard_progress_total) {
+              meta.textContent = "Fetching player counts… " + st.leaderboard_progress_done.toLocaleString("en-US") + " / " + st.leaderboard_progress_total.toLocaleString("en-US");
+            } else if (st.leaderboard_loading) {
+              meta.textContent = "Building global leaderboard…";
+            }
+            var busy = st.loading || (st.ready && st.leaderboard_loading);
+            if (busy) {
+              setTimeout(pollStatus, 800);
+              return;
+            }
+            loadGames();
+          })
+          .catch(function () { setTimeout(pollStatus, 2000); });
+      }
+
+      parseQs();
+
+      function applyFilterNow() {
+        clearTimeout(filterDebounceTimer);
+        pageInput.value = "1";
+        loadGames();
+      }
+
+      function scheduleFilterFromInput() {
+        clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(applyFilterNow, FILTER_DEBOUNCE_MS);
+      }
+
+      searchInput.addEventListener("input", scheduleFilterFromInput);
+      searchInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          applyFilterNow();
+        }
+      });
+      clearSearchBtn.addEventListener("click", function () {
+        clearTimeout(filterDebounceTimer);
+        searchInput.value = "";
+        pageInput.value = "1";
+        loadGames();
+      });
+      applyBtn.addEventListener("click", function () { loadGames(); });
+      prevBtn.addEventListener("click", function () {
+        var p = Math.max(1, (parseInt(pageInput.value, 10) || 1) - 1);
+        pageInput.value = String(p);
+        loadGames();
+      });
+      nextBtn.addEventListener("click", function () {
+        var p = (parseInt(pageInput.value, 10) || 1) + 1;
+        pageInput.value = String(p);
+        loadGames();
+      });
+
+      downloadCatalogBtn.addEventListener("click", function () {
+        showBanner("Downloading catalog from Steam…", "");
+        fetch("/api/catalog/download", { method: "POST" })
+          .then(function (r) {
+            if (!r.ok) throw new Error();
+            return r.json();
+          })
+          .then(function () {
+            pollStatus();
+          })
+          .catch(function () {
+            showBanner("Download failed — set STEAM_API_KEY in .env.", "err");
+          });
+      });
+
+      reloadCatalogBtn.addEventListener("click", function () {
+        showBanner("Re-downloading catalog…", "");
+        fetch("/api/catalog/reload", { method: "POST" })
+          .then(function (r) { return r.json(); })
+          .then(function () {
+            pollStatus();
+          })
+          .catch(function () {
+            showBanner("Reload failed (need STEAM_API_KEY).", "err");
+          });
+      });
+
+      function detailMessage(j) {
+        var d = j && j.detail;
+        if (typeof d === "string") return d;
+        if (Array.isArray(d) && d[0] && d[0].msg) return d[0].msg;
+        return d ? JSON.stringify(d) : "";
+      }
+
+      function apiAbs(path) {
+        return new URL(path, window.location.origin).href;
+      }
+
+      /** Try several POST paths — old servers or proxies may only expose one alias. */
+      function postLeaderboardRebuild() {
+        var paths = [
+          "/api/leaderboard/rebuild",
+          "/api/rebuild-leaderboard",
+          "/api/games/rebuild",
+          "/api/leaderboard/rebuild/"
+        ];
+        function attempt(i) {
+          if (i >= paths.length) {
+            return Promise.reject(
+              new Error(
+                "No rebuild endpoint responded (all returned 404). Restart the API from this folder " +
+                  "(e.g. uvicorn main:app --reload --port 8000) so the latest main.py is loaded. " +
+                  "Open /docs and check for POST /api/leaderboard/rebuild."
+              )
+            );
+          }
+          return fetch(apiAbs(paths[i]), { method: "POST", cache: "no-store" }).then(function (r) {
+            if (r.status === 404 && i + 1 < paths.length) return attempt(i + 1);
+            return r;
+          });
+        }
+        return attempt(0);
+      }
+
+      rebuildLbBtn.addEventListener("click", function () {
+        showBanner("Rebuilding leaderboard (slow)…", "");
+        postLeaderboardRebuild()
+          .then(function (r) {
+            return r.json().then(function (j) {
+              if (!r.ok) throw new Error(detailMessage(j) || r.statusText || "Request failed");
+              return j;
+            });
+          })
+          .then(function (data) {
+            if (data.status === "already_running") {
+              showBanner("Catalog or leaderboard is already running — wait for it to finish.", "");
+            }
+            pollStatus();
+            loadGames();
+          })
+          .catch(function (err) {
+            showBanner(err.message || "Could not start rebuild.", "err");
+          });
+      });
+
+      pageInput.addEventListener("change", loadGames);
+      perPageSelect.addEventListener("change", function () {
+        pageInput.value = "1";
+        loadGames();
+      });
+
+      fetch("/api/catalog/status")
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          if (st.loading || (st.ready && st.leaderboard_loading)) {
+            pollStatus();
+          } else if (st.ready) {
+            loadGames();
+          } else {
+            meta.textContent = st.last_error || "No catalog — click Download catalog";
+            tbody.innerHTML = '<tr><td colspan="4" class="muted pad">Use <strong>Download catalog</strong> after setting <code>STEAM_API_KEY</code>. Optional: <code>STEAM_CATALOG_MAX_APPS=20000</code> for a faster run.</td></tr>';
+            loadGames();
+          }
+        })
+        .catch(function () {
+          loadGames();
+        });
+    })();
+  </script>
+</body>
+</html>

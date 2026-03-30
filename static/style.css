@@ -1,0 +1,243 @@
+:root {
+  --bg: #0e1419;
+  --panel: #171d25;
+  --text: #dbe4ef;
+  --muted: #8b98a6;
+  --accent: #66c0f4;
+  --border: #2a3340;
+  --err: #ff6b6b;
+  --ok: #7bed9f;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(1200px 600px at 10% -10%, #1b2838 0%, var(--bg) 55%);
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.meta {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--accent);
+  background: rgba(102, 192, 244, 0.12);
+  color: var(--accent);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(102, 192, 244, 0.22);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.banner {
+  margin: 0 clamp(1rem, 4vw, 2.5rem);
+  padding: 0.65rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.banner.err {
+  border-color: rgba(255, 107, 107, 0.45);
+  color: #ffc9c9;
+}
+
+.banner.ok {
+  border-color: rgba(123, 237, 159, 0.4);
+  color: #c8f7d4;
+}
+
+.banner.hidden {
+  display: none;
+}
+
+.main {
+  padding: 1rem clamp(1rem, 4vw, 2.5rem) 2rem;
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.data thead th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.data thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.data thead th.sortable:hover {
+  color: var(--accent);
+}
+
+.data tbody td {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid rgba(42, 51, 64, 0.6);
+}
+
+.data tbody tr:hover td {
+  background: rgba(102, 192, 244, 0.06);
+}
+
+.data .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.data .name {
+  max-width: min(52vw, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.pad {
+  padding: 1rem !important;
+}
+
+.btn-secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.field-search {
+  flex: 1 1 14rem;
+  min-width: min(100%, 14rem);
+  max-width: 28rem;
+}
+
+.search-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  padding: 1rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.toolbar .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.toolbar .field span {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbar .input {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  min-width: 5rem;
+}
+
+.toolbar .input.num {
+  width: 4.5rem;
+}
+
+.chart-panel {
+  margin-bottom: 1.25rem;
+}
+
+.panel-title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.chart-scroll {
+  overflow: auto;
+  max-height: min(55vh, 520px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.75rem;
+}

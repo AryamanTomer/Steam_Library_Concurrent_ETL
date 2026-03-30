@@ -1,0 +1,8 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+data/steam_catalog_apps.json
+data/steam_ccu_leaderboard.json
